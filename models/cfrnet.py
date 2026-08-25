@@ -87,7 +87,7 @@ def mmd_distance(phi_t, phi_c, sigma=1.0):
 
 
 def train_cfrnet(X_train, t_train, y_train, input_dim, config=None):
-    """Train CFRNet model."""
+    """Train CFRNet model with early stopping on validation set."""
     if config is None:
         config = {}
 
@@ -101,6 +101,12 @@ def train_cfrnet(X_train, t_train, y_train, input_dim, config=None):
     alpha = config.get("alpha", 1.0)  # IPM weight
     weight_decay = config.get("weight_decay", 1e-4)
     ipm_type = config.get("ipm_type", "wass")  # 'wass' or 'mmd'
+    patience = config.get("patience", 20)
+
+    # Validation data for early stopping
+    X_val = config.get("_X_val")
+    t_val = config.get("_t_val")
+    y_val = config.get("_y_val")
 
     model = CFRNet(input_dim, repr_dim, hypo_dim, n_repr_layers, n_hypo_layers)
 
@@ -112,8 +118,18 @@ def train_cfrnet(X_train, t_train, y_train, input_dim, config=None):
     dataset = TensorDataset(X_t, t_t, y_t)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
+    # Validation tensors
+    if X_val is not None:
+        X_val_t = torch.FloatTensor(X_val)
+        t_val_t = torch.FloatTensor(t_val)
+        y_val_t = torch.FloatTensor(y_val)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
+
+    best_val_loss = float('inf')
+    best_state = None
+    wait = 0
 
     model.train()
     for epoch in range(n_epochs):
@@ -142,6 +158,25 @@ def train_cfrnet(X_train, t_train, y_train, input_dim, config=None):
         if (epoch + 1) % 50 == 0:
             scheduler.step()
 
+        # Early stopping on validation
+        if X_val is not None and (epoch + 1) % 5 == 0:
+            model.eval()
+            with torch.no_grad():
+                y_pred_val, _, _, _ = model(X_val_t, t_val_t)
+                val_loss = nn.MSELoss()(y_pred_val, y_val_t).item()
+            model.train()
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state = {k: v.clone() for k, v in model.state_dict().items()}
+                wait = 0
+            else:
+                wait += 1
+                if wait >= patience:
+                    break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
     model.eval()
     return model
 

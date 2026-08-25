@@ -264,8 +264,9 @@ def orthogonal_penalty(model):
     return penalty
 
 
-def train_catenet(X_train, t_train, y_train, input_dim, model_type="tarnet", config=None):
-    """Train a CATENet model."""
+def train_catenet(X_train, t_train, y_train, input_dim, model_type="tarnet", config=None,
+                  X_val=None, t_val=None, y_val=None):
+    """Train a CATENet model with external validation data."""
     if config is None:
         config = {}
 
@@ -298,17 +299,21 @@ def train_catenet(X_train, t_train, y_train, input_dim, model_type="tarnet", con
     t_t = torch.FloatTensor(t_train)
     y_t = torch.FloatTensor(y_train)
 
-    # Train/val split
-    n = len(X_t)
-    n_val = int(0.2 * n)
-    perm = torch.randperm(n)
-    val_idx = perm[:n_val]
-    train_idx = perm[n_val:]
+    # Use external val data if provided, else internal split
+    if X_val is not None:
+        X_val_t = torch.FloatTensor(X_val)
+        t_val_t = torch.FloatTensor(t_val)
+        y_val_t = torch.FloatTensor(y_val)
+    else:
+        n = len(X_t)
+        n_val = int(0.2 * n)
+        perm = torch.randperm(n)
+        val_idx = perm[:n_val]
+        train_idx = perm[n_val:]
+        X_val_t, t_val_t, y_val_t = X_t[val_idx], t_t[val_idx], y_t[val_idx]
+        X_t, t_t, y_t = X_t[train_idx], t_t[train_idx], y_t[train_idx]
 
-    X_tr, t_tr, y_tr = X_t[train_idx], t_t[train_idx], y_t[train_idx]
-    X_val, t_val, y_val = X_t[val_idx], t_t[val_idx], y_t[val_idx]
-
-    dataset = TensorDataset(X_tr, t_tr, y_tr)
+    dataset = TensorDataset(X_t, t_t, y_t)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -352,14 +357,14 @@ def train_catenet(X_train, t_train, y_train, input_dim, model_type="tarnet", con
         model.eval()
         with torch.no_grad():
             if model_type == "tarnet":
-                y_pred_val, _, _, _ = model(X_val, t_val)
+                y_pred_val, _, _, _ = model(X_val_t, t_val_t)
             elif model_type == "dragonnet":
-                y_pred_val, _, _, _, _ = model(X_val, t_val)
+                y_pred_val, _, _, _, _ = model(X_val_t, t_val_t)
             elif model_type == "snet":
-                y_pred_val, _, _, _, _, _, _ = model(X_val, t_val)
+                y_pred_val, _, _, _, _, _, _ = model(X_val_t, t_val_t)
             elif model_type == "flextenet":
-                y_pred_val, _, _ = model(X_val, t_val)
-            val_loss = nn.MSELoss()(y_pred_val, y_val).item()
+                y_pred_val, _, _ = model(X_val_t, t_val_t)
+            val_loss = nn.MSELoss()(y_pred_val, y_val_t).item()
         model.train()
 
         if val_loss < best_val_loss:

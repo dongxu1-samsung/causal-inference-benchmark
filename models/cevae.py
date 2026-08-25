@@ -135,7 +135,7 @@ def cevae_loss(x, t, y, x_recon, t_logit, y_pred, mu, logvar, beta=1.0):
 
 
 def train_cevae(X_train, t_train, y_train, input_dim, config=None):
-    """Train CEVAE model."""
+    """Train CEVAE model with early stopping on validation."""
     if config is None:
         config = {}
 
@@ -147,6 +147,12 @@ def train_cevae(X_train, t_train, y_train, input_dim, config=None):
     n_epochs = config.get("n_epochs", 200)
     weight_decay = config.get("weight_decay", 1e-4)
     beta = config.get("beta", 1.0)
+    patience = config.get("patience", 15)
+
+    # Validation data for early stopping
+    X_val = config.get("_X_val")
+    t_val = config.get("_t_val")
+    y_val = config.get("_y_val")
 
     model = CEVAE(input_dim, latent_dim, h_dim, n_layers)
 
@@ -157,7 +163,17 @@ def train_cevae(X_train, t_train, y_train, input_dim, config=None):
     dataset = TensorDataset(X_t, t_t, y_t)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
+    # Validation tensors
+    if X_val is not None:
+        X_val_t = torch.FloatTensor(X_val)
+        t_val_t = torch.FloatTensor(t_val)
+        y_val_t = torch.FloatTensor(y_val)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    best_val_loss = float('inf')
+    best_state = None
+    wait = 0
 
     model.train()
     for epoch in range(n_epochs):
@@ -168,6 +184,25 @@ def train_cevae(X_train, t_train, y_train, input_dim, config=None):
             loss.backward()
             optimizer.step()
 
+        # Early stopping on validation
+        if X_val is not None and (epoch + 1) % 3 == 0:
+            model.eval()
+            with torch.no_grad():
+                x_r, t_l, y_p, _, _, mu_v, lv = model(X_val_t, t_val_t, y_val_t)
+                val_loss = cevae_loss(X_val_t, t_val_t, y_val_t, x_r, t_l, y_p, mu_v, lv, beta).item()
+            model.train()
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state = {k: v.clone() for k, v in model.state_dict().items()}
+                wait = 0
+            else:
+                wait += 1
+                if wait >= patience:
+                    break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
     model.eval()
     return model
 

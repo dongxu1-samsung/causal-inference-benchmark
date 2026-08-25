@@ -61,7 +61,7 @@ class DRNet(nn.Module):
 
 
 def train_drnet(X_train, t_train, y_train, input_dim, config=None):
-    """Train DRNet model."""
+    """Train DRNet model with external validation for early stopping."""
     if config is None:
         config = {}
 
@@ -76,24 +76,32 @@ def train_drnet(X_train, t_train, y_train, input_dim, config=None):
     alpha_prop = config.get("alpha_prop", 0.5)  # propensity weight
     patience = config.get("patience", 30)
 
+    # Validation data for early stopping
+    X_val_ext = config.get("_X_val")
+    t_val_ext = config.get("_t_val")
+    y_val_ext = config.get("_y_val")
+
     model = DRNet(input_dim, repr_dim, head_dim, n_repr_layers, n_head_layers)
 
     X_t = torch.FloatTensor(X_train)
     t_t = torch.FloatTensor(t_train)
     y_t = torch.FloatTensor(y_train)
 
-    # Train/val split for early stopping
-    n = len(X_t)
-    n_val = int(0.2 * n)
-    perm = torch.randperm(n)
-    val_idx = perm[:n_val]
-    train_idx = perm[n_val:]
-
-    X_tr, t_tr, y_tr = X_t[train_idx], t_t[train_idx], y_t[train_idx]
-    X_val, t_val, y_val = X_t[val_idx], t_t[val_idx], y_t[val_idx]
-
-    dataset = TensorDataset(X_tr, t_tr, y_tr)
+    dataset = TensorDataset(X_t, t_t, y_t)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    # Use external val data if provided
+    if X_val_ext is not None:
+        X_val = torch.FloatTensor(X_val_ext)
+        t_val = torch.FloatTensor(t_val_ext)
+        y_val = torch.FloatTensor(y_val_ext)
+    else:
+        # Fallback: internal split
+        n = len(X_t)
+        n_val = int(0.2 * n)
+        perm = torch.randperm(n)
+        val_idx = perm[:n_val]
+        X_val, t_val, y_val = X_t[val_idx], t_t[val_idx], y_t[val_idx]
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 

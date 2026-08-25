@@ -89,7 +89,7 @@ class InferenceNet(nn.Module):
 
 
 def train_ganite(X_train, t_train, y_train, input_dim, config=None):
-    """Train GANITE model (2 phases)."""
+    """Train GANITE model (2 phases) with early stopping on validation."""
     if config is None:
         config = {}
 
@@ -99,6 +99,12 @@ def train_ganite(X_train, t_train, y_train, input_dim, config=None):
     n_iter_gan = config.get("n_iter_gan", 5000)
     n_iter_inf = config.get("n_iter_inf", 5000)
     alpha = config.get("alpha", 1.0)
+    patience = config.get("patience", 20)
+
+    # Validation data for early stopping
+    X_val = config.get("_X_val")
+    t_val = config.get("_t_val")
+    y_val = config.get("_y_val")
 
     generator = Generator(input_dim, h_dim)
     discriminator = Discriminator(input_dim, h_dim)
@@ -150,10 +156,19 @@ def train_ganite(X_train, t_train, y_train, input_dim, config=None):
             g_loss.backward()
             opt_g.step()
 
-    # Phase 2: Train Inference Network using generated counterfactuals
+    # Phase 2: Train Inference Network with early stopping
     opt_i = torch.optim.Adam(inference.parameters(), lr=lr)
     inference.train()
     generator.eval()
+
+    if X_val is not None:
+        X_val_t = torch.FloatTensor(X_val)
+        t_val_t = torch.FloatTensor(t_val)
+        y_val_t = torch.FloatTensor(y_val)
+
+    best_val_loss = float('inf')
+    best_state = None
+    wait = 0
 
     for iteration in range(n_iter_inf):
         for batch_x, batch_t, batch_y in loader:
@@ -169,6 +184,26 @@ def train_ganite(X_train, t_train, y_train, input_dim, config=None):
             loss.backward()
             opt_i.step()
 
+        # Early stopping on validation (check every 5 iterations)
+        if X_val is not None and (iteration + 1) % 5 == 0:
+            inference.eval()
+            with torch.no_grad():
+                y0_v, y1_v = inference(X_val_t)
+                y_pred_v = t_val_t * y1_v + (1 - t_val_t) * y0_v
+                val_loss = nn.MSELoss()(y_pred_v, y_val_t).item()
+            inference.train()
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state = {k: v.clone() for k, v in inference.state_dict().items()}
+                wait = 0
+            else:
+                wait += 1
+                if wait >= patience:
+                    break
+
+    if best_state is not None:
+        inference.load_state_dict(best_state)
     inference.eval()
     return inference
 

@@ -10,3 +10,4 @@ build/
 .eggs/
 *.npz
 *.RData
+benchmark_run.log
