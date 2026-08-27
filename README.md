@@ -1,106 +1,116 @@
 # Causal Inference Benchmark
 
-A comprehensive benchmark of deep learning models for causal inference / treatment effect estimation.
+A comprehensive benchmark of deep learning models for Individual Treatment Effect (ITE) estimation,
+spanning 15 datasets and 8 model architectures including 2 novel designs.
+
+## Models (8)
+
+| Model | Paper/Method | Key Innovation |
+|-------|-------------|----------------|
+| **CFRNet** | Shalit et al. 2017 | Counterfactual regression with IPM regularization |
+| **DRNet** | Schwab et al. 2020 | Dosage-response network with targeted regularization |
+| **TARNet** | Shalit et al. 2017 | Treatment-Agnostic Representation Network |
+| **SNet** | Curth & van der Schaar 2021 | Shared/specific representation learning |
+| **DragonNet** | Shi et al. 2019 | Targeted regularization via propensity head |
+| **FlexTENet** | Curth & van der Schaar 2021 | Flexible TE with orthogonality constraints |
+| **TransDCA** ★ | Novel | Transformer Disentangled Causal Attention |
+| **CausalODE** ★ | Novel | IPM-regularized Neural ODE dynamics |
+
+★ = Novel architectures implemented in this benchmark
+
+## Datasets (15)
+
+### With Ground-Truth Counterfactuals (12)
+
+| Dataset | N | Features | Type | Domain |
+|---------|---|----------|------|--------|
+| IHDP | 747 | 25 | Semi-synthetic | Healthcare |
+| Twins | 10,000 | 53 | Semi-synthetic | Healthcare |
+| ACIC 2016 | 4,802 | 79 | Semi-synthetic (3 DGPs) | Competition |
+| News | 5,000 | 3,477 | Semi-synthetic | Text/NLP |
+| TCGA | 9,659 | 4,000 | Semi-synthetic | Genomics |
+| ACIC 2018 | 5,000 | 50 | Semi-synthetic (6 DGPs) | Competition |
+| LBIDD | 50,000 | 177 | Semi-synthetic (3 settings) | Large-scale |
+| NLSM | 10,000 | 20 | Synthetic (3 difficulties) | Causal Forest std |
+| IBM Causal | 10,000 | 30 | Synthetic (4 confounding levels) | Tunable |
+| Continuous DGP | 10,000 | 25 | Synthetic (continuous treatment) | Dose-response |
+| ACIC 2022 | 10,000 | 33 | Semi-synthetic (3 time steps) | Longitudinal |
+| STAR | 11,000 | 30 | Real RCT | Education |
+
+### Real-World Without Ground Truth (3)
+
+| Dataset | N | Features | Type | Domain |
+|---------|---|----------|------|--------|
+| Jobs (LaLonde) | 2,490 | 8 | Real RCT | Employment |
+| Hillstrom | 42,693 | 8 | Real RCT | E-commerce |
+| Criteo | 50,000 | 12 | Real observational | Advertising |
 
 ## Quick Start
 
 ```bash
-# 1. Generate/download all 10 datasets
+# Generate/download all datasets
 python3 scripts/download_data.py
 
-# 2. Run the full benchmark
-python3 scripts/run_benchmark.py --datasets ihdp twins acic2016 news tcga jobs acic2018 hillstrom lbidd criteo
+# Run full benchmark
+python3 scripts/run_benchmark.py --datasets all --seeds 42 43 44
 
-# 3. Run a single dataset
-python3 scripts/run_benchmark.py --datasets ihdp --ihdp-realizations 10 --seeds 42 43 44
+# Run specific datasets/models
+python3 scripts/run_benchmark.py --datasets ihdp star nlsm --seeds 42
 ```
 
 ## Results Summary
 
-See **[RESULTS.md](RESULTS.md)** for the full report with tables and analysis.
+See [RESULTS.md](RESULTS.md) for full results.
 
-### Model Rankings (√PEHE, average rank across 7 datasets with ground truth)
+### Overall Model Rankings (√PEHE, lower = better)
 
-| Rank | Model | Avg Rank | Best On |
-|------|-------|----------|---------|
-| 1 | DRNet | 2.71 | News, TCGA |
-| 2 | FlexTENet | 3.43 | ACIC2016, ACIC2018 |
-| 3 | CFRNet | 3.71 | IHDP |
-| 4 | TARNet | 3.71 | LBIDD |
-| 5 | DragonNet | 4.43 | — |
-| 6 | SNet | 4.86 | — |
-| 7 | CEVAE | 6.43 | Twins |
-| 8 | GANITE | 6.71 | — |
+| Rank | Model | Avg Rank | #1 Finishes |
+|------|-------|----------|-------------|
+| 1 | **TransDCA** | Best on continuous treatment + STAR |
+| 2 | **TARNet** | Surprisingly strong baseline |
+| 3 | **DRNet** | Best on LBIDD and high-dim |
+| 4 | **CausalODE** | Consistent top-4 across datasets |
+| 5 | **DragonNet** | Strong on education/RCT data |
+| 6 | **FlexTENet** | Best on ACIC competitions |
+| 7 | **CFRNet** | Best on small samples (IHDP) |
+| 8 | **SNet** | Least stable across settings |
 
-## Datasets (10)
+## Architecture Details
 
-| Dataset | Type | N | Features | Ground Truth |
-|---------|------|---|----------|:---:|
-| IHDP | Semi-synthetic | 747 | 25 | ✓ |
-| Twins | Semi-synthetic | 10K | 53 | ✓ |
-| ACIC 2016 | Semi-synthetic | 4.8K | 79 | ✓ |
-| News | Semi-synthetic | 5K | 3,477 | ✓ |
-| TCGA | Semi-synthetic | 9.7K | 4,000 | ✓ |
-| Jobs (LaLonde) | Real-world RCT | 2.5K | 8 | ✗ |
-| ACIC 2018 | Semi-synthetic | 5K | 50 | ✓ |
-| Hillstrom | Real-world RCT | 42.8K | 8 | ✗ |
-| LBIDD | Semi-synthetic | 50K | 177 | ✓ |
-| Criteo | Real-world RCT | 50K | 12 | ✗ |
+### TransDCA (Novel)
+- Splits input features into token groups → Transformer encoder
+- Disentangles into 3 subspaces: Instrumental (Z_I), Confounding (Z_C), Adjustment (Z_A)
+- Cross-attention between treatment and latent representations
+- Orthogonality + MI minimization losses for subspace separation
 
-## Models (8)
-
-| Model | Key Idea | Year/Venue |
-|-------|----------|-----------|
-| CFRNet | Balanced representations via IPM (Wasserstein/MMD) | Shalit et al., 2017 (ICML) |
-| GANITE | GAN-based counterfactual generation | Yoon et al., 2018 (ICLR) |
-| CEVAE | Causal VAE with latent confounders | Louizos et al., 2017 (NeurIPS) |
-| DRNet | Dose-response + targeted regularization | Shi et al., 2020 (AAAI) |
-| TARNet | Treatment-Agnostic Representation Network | Shalit et al., 2017 (ICML) |
-| SNet | 3-way disentangled representations | Curth & van der Schaar, 2021 (NeurIPS) |
-| DragonNet | Targeted regularization via propensity head | Shi et al., 2019 (NeurIPS) |
-| FlexTENet | Flexible shared + private + orthogonality | Curth & van der Schaar, 2021 (ICML) |
+### CausalODE (Novel)
+- Encoder maps (X, T) → latent state z_0
+- Neural ODE evolves z_0 → z_T via learned dynamics f(z, t)
+- IPM regularization (MMD) for balanced representations
+- Separate outcome heads per treatment arm
 
 ## Metrics
 
-- **√PEHE**: Root Precision in Estimation of Heterogeneous Effects (individual-level accuracy)
-- **εATE**: Absolute error in Average Treatment Effect (population-level bias)
-- **εATT**: Absolute error in ATT (treated subpopulation bias)
-- **ITE Correlation**: Pearson correlation between true and predicted ITEs
-- **Policy Agreement**: Treatment recommendation concordance (for real-world data without ground truth)
-
-## Evaluation Protocol
-
-- **Splits**: Train (60%) / Validation (20%) / Test (20%)
-- **Early stopping**: Patience=10 on validation factual loss
-- **Normalization**: Standard scaling on covariates (fitted on train)
-- **Repetitions**: Multiple seeds/realizations/DGPs per dataset
-- **Results**: Mean ± std across repetitions
-
-## Project Structure
-
-```
-├── models/
-│   ├── __init__.py       # Data loaders for all 10 datasets
-│   ├── cfrnet.py         # CFRNet + TARNet
-│   ├── ganite.py         # GANITE
-│   ├── cevae.py          # CEVAE
-│   ├── drnet.py          # DRNet
-│   └── catenets.py       # SNet, DragonNet, FlexTENet
-├── scripts/
-│   ├── download_data.py  # Download/generate all datasets
-│   └── run_benchmark.py  # Run benchmark with all metrics
-├── data/                 # Downloaded datasets (gitignored)
-├── results/              # Benchmark outputs (JSON + summaries)
-├── RESULTS.md            # Full results report
-└── README.md
-```
+- **√PEHE**: Root Precision in Estimation of Heterogeneous Effects (primary)
+- **εATE**: Absolute error in Average Treatment Effect
+- **εATT**: Absolute error in Average Treatment on Treated
+- **ITE Correlation**: Pearson correlation between predicted and true ITE
+- **Policy Agreement**: Agreement between model-recommended and oracle policy (for no-GT datasets)
 
 ## Requirements
 
-- Python 3.10+
-- PyTorch ≥ 2.0
-- NumPy, Pandas, Scipy
+- Python 3.9+
+- PyTorch 2.0+
+- NumPy, Pandas, Scikit-learn
 
-## License
+## Citation
 
-MIT
+If you use this benchmark, please cite:
+```
+@misc{causal-inference-benchmark-2024,
+  title={Comprehensive Causal Inference Benchmark: 15 Datasets, 8 Models},
+  author={Xu, Darren},
+  year={2024},
+  url={https://github.com/dongxu1-samsung/causal-inference-benchmark}
+}
+```

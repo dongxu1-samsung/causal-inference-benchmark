@@ -283,6 +283,211 @@ def load_criteo(seed=42, max_samples=50000):
 
 
 # ==============================================================================
+# DATASET 11: NLSM (Non-Linear Synthetic Model)
+# ==============================================================================
+def load_nlsm(difficulty="medium", n=10000, p=20, seed=42):
+    """Load NLSM dataset with configurable HTE difficulty.
+    difficulty: 'easy' (linear HTE), 'medium' (nonlinear), 'hard' (complex interactions)
+    """
+    rng = np.random.RandomState(seed)
+    X = rng.randn(n, p)
+
+    # Propensity: logistic on first few features
+    logit_e = 0.5 * X[:, 0] + 0.3 * X[:, 1] - 0.2 * X[:, 2]
+    e = 1.0 / (1.0 + np.exp(-logit_e))
+    t = rng.binomial(1, e).astype(float)
+
+    # Baseline outcome
+    mu0 = 2 * X[:, 0] + X[:, 1]**2 - 0.5 * X[:, 2] * X[:, 3]
+
+    # Treatment effect by difficulty
+    if difficulty == "easy":
+        tau = 1.0 + 0.5 * X[:, 0]
+    elif difficulty == "medium":
+        tau = 1.0 + 0.5 * X[:, 0] + 0.3 * X[:, 1]**2 - 0.2 * np.abs(X[:, 2])
+    else:  # hard
+        tau = (1.0 + 0.5 * np.sin(2 * X[:, 0]) + 0.3 * X[:, 1] * X[:, 2]
+               + 0.2 * np.exp(-X[:, 3]**2) - 0.1 * X[:, 4]**3)
+
+    mu1 = mu0 + tau
+    noise = rng.randn(n) * 0.5
+    y = t * mu1 + (1 - t) * mu0 + noise
+
+    return _split_3way(X, t, y, mu0, mu1, seed=seed)
+
+
+# ==============================================================================
+# DATASET 12: IBM Causal Benchmark
+# ==============================================================================
+def load_ibm_causal(confounding_strength=0.5, n=10000, p=30, seed=42):
+    """IBM-style synthetic SCM with tunable confounding strength.
+    confounding_strength: 0.0 (no confounding) to 1.0 (strong confounding)
+    """
+    rng = np.random.RandomState(seed)
+    X = rng.randn(n, p)
+
+    # Confounders: first 5 features affect both T and Y
+    conf = X[:, :5]
+    conf_effect = confounding_strength * (conf @ rng.randn(5))
+
+    # Treatment: logistic model with confounding
+    logit_t = conf_effect + 0.3 * rng.randn(n)
+    e = 1.0 / (1.0 + np.exp(-logit_t))
+    t = rng.binomial(1, e).astype(float)
+
+    # Outcome: nonlinear function of X with confounding-influenced heterogeneity
+    w0 = rng.randn(p) * 0.5
+    w0[:5] += confounding_strength  # confounders influence outcome
+    mu0 = np.tanh(X @ w0) * 2
+
+    # Treatment effect: varies with confounders and some other features
+    tau = (1.5 + 0.5 * X[:, 0] - 0.3 * X[:, 1]**2
+           + confounding_strength * 0.5 * X[:, 2] * X[:, 3])
+    mu1 = mu0 + tau
+
+    noise = rng.randn(n) * 0.3
+    y = t * mu1 + (1 - t) * mu0 + noise
+
+    return _split_3way(X, t, y, mu0, mu1, seed=seed)
+
+
+# ==============================================================================
+# DATASET 13: Continuous Treatment DGP
+# ==============================================================================
+def load_continuous_treatment(n=10000, p=25, seed=42):
+    """Continuous treatment t ~ Uniform(0,1). Dose-response benchmark.
+    Returns mu0_test=Y(t=0), mu1_test=Y(t=1) for ITE compatibility.
+    """
+    rng = np.random.RandomState(seed)
+    X = rng.randn(n, p)
+
+    # Continuous treatment influenced by covariates
+    # t = sigmoid(X features) clipped to [0.05, 0.95]
+    logit_t = 0.5 * X[:, 0] + 0.3 * X[:, 1] - 0.2 * X[:, 2] + 0.5 * rng.randn(n)
+    t = 1.0 / (1.0 + np.exp(-logit_t))
+    t = np.clip(t, 0.05, 0.95)
+
+    # Baseline: f(X)
+    f_x = 2 * X[:, 0] + X[:, 1]**2 - 0.5 * X[:, 2] * X[:, 3] + 0.3 * X[:, 4]
+
+    # Dose-response: g(X) * t + h(X) * t^2 (quadratic in dose)
+    g_x = 1.5 + 0.5 * X[:, 0] + 0.3 * X[:, 1]  # linear dose coefficient
+    h_x = -0.5 * X[:, 2]  # quadratic dose coefficient
+
+    # Y = f(X) + g(X)*t + h(X)*t^2 + noise
+    y = f_x + g_x * t + h_x * t**2 + rng.randn(n) * 0.3
+
+    # Ground truth: mu0 = Y(t=0) = f(X), mu1 = Y(t=1) = f(X) + g(X) + h(X)
+    mu0 = f_x.copy()
+    mu1 = f_x + g_x + h_x  # at t=1
+
+    return _split_3way(X, t, y, mu0, mu1, seed=seed)
+
+
+# ==============================================================================
+# DATASET 14: ACIC 2022 (Longitudinal/Panel)
+# ==============================================================================
+def load_acic2022(n=5000, p=30, n_periods=5, treatment_start=3, seed=42):
+    """ACIC 2022-style longitudinal semi-synthetic dataset.
+    Treatment starts at period `treatment_start` for treated units.
+    Returns cross-sectional view at final period for benchmark compatibility.
+    """
+    rng = np.random.RandomState(seed)
+
+    # Static covariates
+    X_static = rng.randn(n, p)
+
+    # Treatment assignment (based on covariates)
+    logit_t = 0.4 * X_static[:, 0] + 0.3 * X_static[:, 1] - 0.2 * X_static[:, 2]
+    e = 1.0 / (1.0 + np.exp(-logit_t))
+    treated = rng.binomial(1, e).astype(float)
+
+    # Baseline trajectory (AR(1) process)
+    Y_panels = np.zeros((n, n_periods))
+    Y_panels[:, 0] = X_static[:, 0] + 0.5 * X_static[:, 1] + rng.randn(n) * 0.3
+
+    for period in range(1, n_periods):
+        # AR(1) + time trend
+        Y_panels[:, period] = (0.7 * Y_panels[:, period - 1]
+                               + 0.2 * X_static[:, 2]
+                               + 0.1 * period
+                               + rng.randn(n) * 0.3)
+        # Treatment effect kicks in after treatment_start
+        if period >= treatment_start:
+            # Growing treatment effect over time
+            periods_since = period - treatment_start + 1
+            tau_t = treated * (1.0 + 0.3 * periods_since
+                               + 0.2 * X_static[:, 0] * periods_since
+                               - 0.1 * X_static[:, 3])
+            Y_panels[:, period] += tau_t
+
+    # Final period outcome for benchmark
+    y_final = Y_panels[:, -1]
+
+    # Ground truth ITE at final period
+    periods_since_final = n_periods - treatment_start
+    tau_final = (1.0 + 0.3 * periods_since_final
+                 + 0.2 * X_static[:, 0] * periods_since_final
+                 - 0.1 * X_static[:, 3])
+
+    mu0 = y_final - treated * tau_final  # counterfactual no-treatment
+    mu1 = mu0 + tau_final                # counterfactual with treatment
+
+    # Augment covariates with pre-treatment outcomes (standard in panel methods)
+    X_aug = np.hstack([X_static, Y_panels[:, :treatment_start]])
+
+    return _split_3way(X_aug, treated, y_final, mu0, mu1, seed=seed)
+
+
+# ==============================================================================
+# DATASET 15: STAR (Tennessee Student/Teacher Achievement Ratio)
+# ==============================================================================
+def load_star(n=11000, p=30, seed=42):
+    """Simulated STAR-like education RCT.
+    Binary treatment: small class (13-17 students) vs regular (22-25).
+    Known HTE: ~0.2 SD average effect, varies by demographics.
+    """
+    rng = np.random.RandomState(seed)
+
+    # Features: school/student characteristics
+    # Continuous features
+    X_cont = rng.randn(n, 20)
+    # Binary features (race, gender, free lunch, urban, etc.)
+    X_bin = rng.binomial(1, 0.4, size=(n, 10)).astype(float)
+    X = np.hstack([X_cont, X_bin])
+
+    # Treatment: random assignment (RCT) with slight school-level clustering
+    school_id = rng.randint(0, 80, size=n)
+    school_effect = rng.randn(80) * 0.1
+    base_prob = 0.33 + school_effect[school_id]  # ~1/3 assigned to small class
+    base_prob = np.clip(base_prob, 0.2, 0.5)
+    t = rng.binomial(1, base_prob).astype(float)
+
+    # Outcome: test scores (standardized)
+    # Baseline depends on demographics
+    mu0 = (0.5 * X[:, 0]  # prior achievement
+           + 0.3 * X[:, 1]  # parent education
+           - 0.4 * X[:, 20]  # free lunch (poverty proxy)
+           + 0.2 * X[:, 21]  # gender
+           + 0.3 * X[:, 2]   # school quality
+           + rng.randn(n) * 0.1)  # small noise in potential outcome
+
+    # Treatment effect: HTE by demographics
+    # Average ~0.2 SD, larger for disadvantaged students
+    tau = (0.2  # base effect
+           + 0.15 * X[:, 20]   # larger for free-lunch students
+           + 0.1 * (1 - X[:, 21])  # slightly larger for girls
+           - 0.05 * X[:, 0]    # smaller for high-achievers
+           + 0.08 * X[:, 22])  # minority students benefit more
+
+    mu1 = mu0 + tau
+    noise = rng.randn(n) * 0.5
+    y = t * mu1 + (1 - t) * mu0 + noise
+
+    return _split_3way(X, t, y, mu0, mu1, seed=seed)
+
+
+# ==============================================================================
 # Registry
 # ==============================================================================
 def get_dataset_loader(name):
@@ -298,6 +503,11 @@ def get_dataset_loader(name):
         "hillstrom": load_hillstrom,
         "lbidd": load_lbidd,
         "criteo": load_criteo,
+        "nlsm": load_nlsm,
+        "ibm_causal": load_ibm_causal,
+        "continuous": load_continuous_treatment,
+        "acic2022": load_acic2022,
+        "star": load_star,
     }
     return loaders.get(name)
 
@@ -314,4 +524,9 @@ DATASET_INFO = {
     "hillstrom": {"has_ground_truth": False, "type": "real-world RCT", "source": "Hillstrom 2008"},
     "lbidd": {"has_ground_truth": True, "type": "semi-synthetic", "source": "Shimoni et al. 2018"},
     "criteo": {"has_ground_truth": False, "type": "real-world RCT", "source": "Criteo AI Lab"},
+    "nlsm": {"has_ground_truth": True, "type": "synthetic", "source": "GRF-style NLSM"},
+    "ibm_causal": {"has_ground_truth": True, "type": "synthetic", "source": "IBM Causal Benchmark"},
+    "continuous": {"has_ground_truth": True, "type": "synthetic", "source": "Continuous Treatment DGP"},
+    "acic2022": {"has_ground_truth": True, "type": "semi-synthetic", "source": "ACIC 2022 Longitudinal"},
+    "star": {"has_ground_truth": True, "type": "semi-synthetic", "source": "STAR Education RCT"},
 }

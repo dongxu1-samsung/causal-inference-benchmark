@@ -11,3 +11,5 @@ build/
 *.npz
 *.RData
 benchmark_run.log
+benchmark_*.log
+results_part1/

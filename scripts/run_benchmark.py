@@ -1,8 +1,9 @@
 """
-Enhanced benchmark runner with:
+Enhanced benchmark runner v2 with:
+- 15 datasets (original 10 + 5 new)
+- 8 models (removed GANITE/CEVAE, added TransDCA/CausalODE)
 - Proper train/val/test splits (early stopping on val for all models)
 - Metrics: sqrt_PEHE, epsilon_ATE, epsilon_ATT, ITE_Correlation, Policy_Risk
-- Support for 10 datasets
 """
 
 import sys
@@ -16,10 +17,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import get_dataset_loader, DATASET_INFO
 from models.cfrnet import train_cfrnet, predict_cfrnet
-from models.ganite import train_ganite, predict_ganite
-from models.cevae import train_cevae, predict_cevae
 from models.drnet import train_drnet, predict_drnet
 from models.catenets import train_catenet, predict_catenet
+from models.transdca import train_transdca, predict_transdca
+from models.causal_ode import train_causal_ode, predict_causal_ode
 
 
 # ==============================================================================
@@ -29,7 +30,7 @@ def compute_metrics(ite_pred, t_test, y_test, mu0_test=None, mu1_test=None):
     """
     Compute all metrics. For datasets with ground truth (mu0, mu1),
     compute PEHE, ATE error, ATT error, ITE correlation.
-    For datasets without ground truth, compute policy risk.
+    For datasets without ground truth, compute policy agreement.
     """
     results = {}
 
@@ -59,27 +60,19 @@ def compute_metrics(ite_pred, t_test, y_test, mu0_test=None, mu1_test=None):
         else:
             results['ite_corr'] = 0.0
 
-    # Policy Risk (works for all datasets, including those without ground truth)
-    # R_pol = 1 - E[Y * 1(T = pi(X))] / E[Y] (simplified version using IPW)
-    # For semi-synthetic: R_pol = E[Y(1-pi(x))] where pi is model's recommended treatment
+    # Policy Risk / Policy Agreement
     if mu0_test is not None and mu1_test is not None:
-        # Optimal policy: treat if ITE > 0
+        ite_true = mu1_test - mu0_test
         policy_pred = (ite_pred > 0).astype(float)
-        # Expected outcome under predicted policy
         y_policy = policy_pred * mu1_test + (1 - policy_pred) * mu0_test
-        # Expected outcome under oracle policy
         policy_oracle = (ite_true > 0).astype(float)
         y_oracle = policy_oracle * mu1_test + (1 - policy_oracle) * mu0_test
-        # Policy risk = normalized regret
         if y_oracle.mean() != 0:
             results['policy_risk'] = float(1 - y_policy.mean() / y_oracle.mean())
         else:
             results['policy_risk'] = float(np.abs(y_policy.mean() - y_oracle.mean()))
     else:
-        # For real-world datasets: use observed outcome under predicted policy
-        # This is a proxy — true policy risk requires counterfactuals
         policy_pred = (ite_pred > 0).astype(float)
-        # Agreement rate with actual treatment
         agreement = np.mean(policy_pred == t_test)
         results['policy_agreement'] = float(agreement)
 
@@ -92,7 +85,7 @@ def compute_metrics(ite_pred, t_test, y_test, mu0_test=None, mu1_test=None):
 def train_and_predict(model_name, X_train, t_train, y_train, X_val, t_val, y_val, X_test, config):
     """
     Train model with early stopping on validation set, predict ITE on test set.
-    Returns: ite_pred (numpy array), training_time (float)
+    Returns: ite_pred (numpy array), training_time (float), error (str or None)
     """
     input_dim = X_train.shape[1]
 
@@ -113,29 +106,26 @@ def train_and_predict(model_name, X_train, t_train, y_train, X_val, t_val, y_val
 
     try:
         if model_name == 'cfrnet':
-            # CFRNet: pass val data for early stopping
             cfg = {**config, '_X_val': X_val_n, '_t_val': t_val, '_y_val': y_val_n}
             model = train_cfrnet(X_tr_n, t_train, y_tr_n, input_dim, cfg)
             ite = predict_cfrnet(model, X_te_n) * y_std
-
-        elif model_name == 'ganite':
-            cfg = {**config, '_X_val': X_val_n, '_t_val': t_val, '_y_val': y_val_n}
-            model = train_ganite(X_tr_n, t_train, y_tr_n, input_dim, cfg)
-            ite = predict_ganite(model, X_te_n) * y_std
-
-        elif model_name == 'cevae':
-            cfg = {**config, '_X_val': X_val_n, '_t_val': t_val, '_y_val': y_val_n}
-            model = train_cevae(X_tr_n, t_train, y_tr_n, input_dim, cfg)
-            ite = predict_cevae(model, X_te_n, n_samples=5) * y_std
 
         elif model_name == 'drnet':
             cfg = {**config, '_X_val': X_val_n, '_t_val': t_val, '_y_val': y_val_n}
             model = train_drnet(X_tr_n, t_train, y_tr_n, input_dim, cfg)
             ite = predict_drnet(model, X_te_n) * y_std
 
+        elif model_name == 'transdca':
+            cfg = {**config, '_X_val': X_val_n, '_t_val': t_val, '_y_val': y_val_n}
+            model = train_transdca(X_tr_n, t_train, y_tr_n, input_dim, cfg)
+            ite = predict_transdca(model, X_te_n) * y_std
+
+        elif model_name == 'causal_ode':
+            cfg = {**config, '_X_val': X_val_n, '_t_val': t_val, '_y_val': y_val_n}
+            model = train_causal_ode(X_tr_n, t_train, y_tr_n, input_dim, cfg)
+            ite = predict_causal_ode(model, X_te_n) * y_std
+
         elif model_name in ['tarnet', 'snet', 'dragonnet', 'flextenet']:
-            # CATENets already have internal val split — we override with our val set
-            # Concatenate train+val and let internal split use our val
             cfg = {**config}
             model = train_catenet(X_tr_n, t_train, y_tr_n, input_dim,
                                   model_type=model_name, config=cfg,
@@ -162,8 +152,6 @@ def get_model_configs(dataset_size, input_dim):
         return {
             'cfrnet': {'repr_dim': 100, 'hypo_dim': 50, 'n_epochs': 100, 'lr': 1e-3,
                        'n_repr_layers': 2, 'n_hypo_layers': 2, 'patience': 20},
-            'ganite': {'h_dim': 50, 'n_iter_gan': 600, 'n_iter_inf': 600, 'lr': 1e-3, 'patience': 20},
-            'cevae': {'h_dim': 64, 'latent_dim': 15, 'n_epochs': 60, 'lr': 1e-3, 'n_layers': 2, 'patience': 15},
             'drnet': {'repr_dim': 50, 'head_dim': 50, 'n_epochs': 100, 'lr': 1e-3,
                       'n_repr_layers': 2, 'n_head_layers': 2, 'patience': 20},
             'tarnet': {'repr_dim': 100, 'out_dim': 50, 'n_epochs': 100, 'lr': 1e-4,
@@ -174,14 +162,18 @@ def get_model_configs(dataset_size, input_dim):
                           'n_repr_layers': 2, 'n_out_layers': 2, 'patience': 20},
             'flextenet': {'repr_dim': 100, 'out_dim': 50, 'n_epochs': 100, 'lr': 1e-4,
                           'n_repr_layers': 2, 'n_out_layers': 2, 'patience': 20},
+            'transdca': {'d_model': 64, 'nhead': 4, 'n_layers': 2, 'dim_ff': 128,
+                         'repr_dim': 32, 'head_dim': 32, 'n_epochs': 100, 'lr': 1e-3,
+                         'batch_size': 128, 'patience': 20, 'alpha': 0.5, 'beta': 0.1},
+            'causal_ode': {'latent_dim': 64, 'ode_steps': 15, 'n_epochs': 100, 'lr': 1e-3,
+                           'batch_size': 128, 'patience': 20, 'lambda_0': 1.0,
+                           'n_head_layers': 2, 'head_dim': 32},
         }
     elif dataset_size < 10000:
-        # Medium (Twins, ACIC, News, ACIC2018)
+        # Medium (Twins, ACIC, News, ACIC2018, NLSM, IBM, Continuous, ACIC2022, STAR)
         return {
             'cfrnet': {'repr_dim': 64, 'hypo_dim': 32, 'n_epochs': 80, 'lr': 1e-3,
                        'n_repr_layers': 2, 'n_hypo_layers': 2, 'patience': 15},
-            'ganite': {'h_dim': 32, 'n_iter_gan': 500, 'n_iter_inf': 500, 'lr': 1e-3, 'patience': 15},
-            'cevae': {'h_dim': 50, 'latent_dim': 10, 'n_epochs': 40, 'lr': 1e-3, 'n_layers': 2, 'patience': 10},
             'drnet': {'repr_dim': 32, 'head_dim': 32, 'n_epochs': 80, 'lr': 1e-3,
                       'n_repr_layers': 2, 'n_head_layers': 2, 'patience': 15},
             'tarnet': {'repr_dim': 64, 'out_dim': 32, 'n_epochs': 80, 'lr': 1e-4,
@@ -192,6 +184,12 @@ def get_model_configs(dataset_size, input_dim):
                           'n_repr_layers': 2, 'n_out_layers': 2, 'patience': 15},
             'flextenet': {'repr_dim': 64, 'out_dim': 32, 'n_epochs': 80, 'lr': 1e-4,
                           'n_repr_layers': 2, 'n_out_layers': 2, 'patience': 15},
+            'transdca': {'d_model': 64, 'nhead': 4, 'n_layers': 2, 'dim_ff': 128,
+                         'repr_dim': 32, 'head_dim': 32, 'n_epochs': 80, 'lr': 1e-3,
+                         'batch_size': 256, 'patience': 15, 'alpha': 0.5, 'beta': 0.1},
+            'causal_ode': {'latent_dim': 64, 'ode_steps': 15, 'n_epochs': 80, 'lr': 1e-3,
+                           'batch_size': 256, 'patience': 15, 'lambda_0': 1.0,
+                           'n_head_layers': 2, 'head_dim': 32},
         }
     else:
         # Large (TCGA, LBIDD, Criteo, Hillstrom)
@@ -199,8 +197,6 @@ def get_model_configs(dataset_size, input_dim):
         return {
             'cfrnet': {'repr_dim': hdim * 2, 'hypo_dim': hdim, 'n_epochs': 40, 'lr': 1e-3,
                        'n_repr_layers': 2, 'n_hypo_layers': 2, 'patience': 10},
-            'ganite': {'h_dim': hdim, 'n_iter_gan': 300, 'n_iter_inf': 300, 'lr': 1e-3, 'patience': 10},
-            'cevae': {'h_dim': hdim * 2, 'latent_dim': 8, 'n_epochs': 25, 'lr': 1e-3, 'n_layers': 2, 'patience': 8},
             'drnet': {'repr_dim': hdim, 'head_dim': hdim, 'n_epochs': 40, 'lr': 1e-3,
                       'n_repr_layers': 2, 'n_head_layers': 2, 'patience': 10},
             'tarnet': {'repr_dim': hdim * 2, 'out_dim': hdim, 'n_epochs': 40, 'lr': 5e-4,
@@ -211,14 +207,21 @@ def get_model_configs(dataset_size, input_dim):
                           'n_repr_layers': 2, 'n_out_layers': 2, 'patience': 10},
             'flextenet': {'repr_dim': hdim * 2, 'out_dim': hdim, 'n_epochs': 40, 'lr': 5e-4,
                           'n_repr_layers': 2, 'n_out_layers': 2, 'patience': 10},
+            'transdca': {'d_model': 64, 'nhead': 4, 'n_layers': 2, 'dim_ff': 128,
+                         'repr_dim': 32, 'head_dim': 32, 'n_epochs': 20, 'lr': 2e-3,
+                         'batch_size': 512, 'patience': 5, 'alpha': 0.5, 'beta': 0.1},
+            'causal_ode': {'latent_dim': 48, 'ode_steps': 10, 'n_epochs': 40, 'lr': 1e-3,
+                           'batch_size': 512, 'patience': 10, 'lambda_0': 1.0,
+                           'n_head_layers': 2, 'head_dim': 24},
         }
 
 
 # ==============================================================================
 # Main benchmark runner
 # ==============================================================================
-ALL_MODELS = ['cfrnet', 'ganite', 'cevae', 'drnet', 'tarnet', 'snet', 'dragonnet', 'flextenet']
-ALL_DATASETS = ['ihdp', 'twins', 'acic2016', 'news', 'tcga', 'jobs', 'acic2018', 'hillstrom', 'lbidd', 'criteo']
+ALL_MODELS = ['cfrnet', 'drnet', 'tarnet', 'snet', 'dragonnet', 'flextenet', 'transdca', 'causal_ode']
+ALL_DATASETS = ['ihdp', 'twins', 'acic2016', 'news', 'tcga', 'jobs', 'acic2018', 'hillstrom', 'lbidd', 'criteo',
+                'nlsm', 'ibm_causal', 'continuous', 'acic2022', 'star']
 
 
 def run_single_experiment(dataset_name, model_name, data, config):
@@ -261,7 +264,6 @@ def run_dataset_benchmark(dataset_name, models=None, seeds=None, ihdp_realizatio
         return {}
 
     info = DATASET_INFO.get(dataset_name, {})
-    has_gt = info.get("has_ground_truth", True)
 
     results = {m: [] for m in models}
 
@@ -278,6 +280,14 @@ def run_dataset_benchmark(dataset_name, models=None, seeds=None, ihdp_realizatio
     elif dataset_name == 'lbidd':
         iterations = [(s, 42 + s) for s in range(1, 4)]
         iter_label = "setting"
+    elif dataset_name == 'ibm_causal':
+        # Multiple confounding strengths
+        iterations = [(i, 42 + i) for i in range(1, 5)]
+        iter_label = "conf_strength"
+    elif dataset_name == 'nlsm':
+        # Multiple difficulties
+        iterations = [(i, 42 + i) for i in range(1, 4)]
+        iter_label = "difficulty"
     else:
         iterations = [(s, s) for s in seeds]
         iter_label = "seed"
@@ -295,6 +305,12 @@ def run_dataset_benchmark(dataset_name, models=None, seeds=None, ihdp_realizatio
                 data = loader(setting=iter_val, seed=seed)
             elif dataset_name == 'hillstrom':
                 data = loader(treatment="mens", seed=seed)
+            elif dataset_name == 'nlsm':
+                difficulties = ['easy', 'medium', 'hard']
+                data = loader(difficulty=difficulties[iter_val - 1], seed=seed)
+            elif dataset_name == 'ibm_causal':
+                strengths = [0.2, 0.5, 0.8, 1.0]
+                data = loader(confounding_strength=strengths[iter_val - 1], seed=seed)
             else:
                 data = loader(seed=seed)
         except Exception as e:
@@ -312,7 +328,7 @@ def run_dataset_benchmark(dataset_name, models=None, seeds=None, ihdp_realizatio
         configs = get_model_configs(n_train + n_val, input_dim)
 
         for mn in models:
-            config = configs[mn]
+            config = configs.get(mn, {})
             res = run_single_experiment(dataset_name, mn, data, config)
 
             if 'error' in res:
@@ -349,9 +365,9 @@ def aggregate_results(results):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Enhanced Causal Inference Benchmark")
-    parser.add_argument('--datasets', nargs='+', default=ALL_DATASETS, choices=ALL_DATASETS)
-    parser.add_argument('--models', nargs='+', default=ALL_MODELS, choices=ALL_MODELS)
+    parser = argparse.ArgumentParser(description="Causal Inference Benchmark v2 (15 datasets × 8 models)")
+    parser.add_argument('--datasets', nargs='+', default=ALL_DATASETS)
+    parser.add_argument('--models', nargs='+', default=ALL_MODELS)
     parser.add_argument('--seeds', nargs='+', type=int, default=[42, 43, 44])
     parser.add_argument('--ihdp-realizations', type=int, default=10)
     parser.add_argument('--output-dir', default='results')
