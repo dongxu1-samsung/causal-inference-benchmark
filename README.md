@@ -1,9 +1,11 @@
 # Causal Inference Benchmark
 
-A comprehensive benchmark of deep learning models for Individual Treatment Effect (ITE) estimation,
-spanning 15 datasets and 8 model architectures including 2 novel designs.
+A comprehensive benchmark for Individual Treatment Effect (ITE) estimation,
+spanning **15 datasets** and **14 model architectures** (8 neural + 6 ML/tree-based).
 
-## Models (8)
+## Models (14)
+
+### Neural Models (8)
 
 | Model | Paper/Method | Key Innovation |
 |-------|-------------|----------------|
@@ -17,6 +19,17 @@ spanning 15 datasets and 8 model architectures including 2 novel designs.
 | **CausalODE** ★ | Novel | IPM-regularized Neural ODE dynamics |
 
 ★ = Novel architectures implemented in this benchmark
+
+### ML / Tree-Based Models (6)
+
+| Model | Package | Key Innovation |
+|-------|---------|----------------|
+| **CausalForestDML** | EconML | Honest causal forest + double ML orthogonalization |
+| **DR-Learner** | CausalML + LGBM | Doubly-robust meta-learner with gradient boosting |
+| **X-Learner** | CausalML + XGBoost | Cross-imputation for unbalanced treatment groups |
+| **R-Learner** | CausalML + LGBM | Residual-on-residual orthogonal meta-learner |
+| **UpliftRF** | CausalML | Uplift random forest with KL-divergence splitting |
+| **BART** | sklearn HistGBR | Bayesian-style T-learner with HistGradientBoosting |
 
 ## Datasets (15)
 
@@ -41,7 +54,7 @@ spanning 15 datasets and 8 model architectures including 2 novel designs.
 
 | Dataset | N | Features | Type | Domain |
 |---------|---|----------|------|--------|
-| Jobs (LaLonde) | 2,490 | 8 | Real RCT | Employment |
+| Jobs (LaLonde) | 2,787 | 8 | Real RCT | Employment |
 | Hillstrom | 42,693 | 8 | Real RCT | E-commerce |
 | Criteo | 50,000 | 12 | Real observational | Advertising |
 
@@ -51,29 +64,49 @@ spanning 15 datasets and 8 model architectures including 2 novel designs.
 # Generate/download all datasets
 python3 scripts/download_data.py
 
-# Run full benchmark
+# Run neural models benchmark (v2)
 python3 scripts/run_benchmark.py --datasets all --seeds 42 43 44
 
-# Run specific datasets/models
-python3 scripts/run_benchmark.py --datasets ihdp star nlsm --seeds 42
+# Run ML/tree-based models benchmark (v3)
+python3 scripts/run_benchmark_v3.py
 ```
 
 ## Results Summary
 
-See [RESULTS.md](RESULTS.md) for full results.
+See [RESULTS.md](RESULTS.md) for full tables.
 
-### Overall Model Rankings (√PEHE, lower = better)
+### Overall Model Rankings (√PEHE across 11 GT datasets, lower rank = better)
 
-| Rank | Model | Avg Rank | #1 Finishes |
-|------|-------|----------|-------------|
-| 1 | **TransDCA** | Best on continuous treatment + STAR |
-| 2 | **TARNet** | Surprisingly strong baseline |
-| 3 | **DRNet** | Best on LBIDD and high-dim |
-| 4 | **CausalODE** | Consistent top-4 across datasets |
-| 5 | **DragonNet** | Strong on education/RCT data |
-| 6 | **FlexTENet** | Best on ACIC competitions |
-| 7 | **CFRNet** | Best on small samples (IHDP) |
-| 8 | **SNet** | Least stable across settings |
+| Rank | Model | Type | Avg Rank | #1 Wins |
+|------|-------|------|----------|---------|
+| 1 | **DRNet** | Neural | 5.64 | 0 |
+| 2 | **FlexTENet** | Neural | 5.64 | 3 |
+| 3 | **CausalODE** | Neural | 5.82 | 0 |
+| 4 | **CFRNet** | Neural | 5.91 | 0 |
+| 5 | **TARNet** | Neural | 5.91 | 0 |
+| 6 | **TransDCA** | Neural | 6.27 | 3 |
+| 7 | **X-Learner** | ML | 6.60 | 1 |
+| 8 | **DragonNet** | Neural | 6.73 | 0 |
+| 9 | **BART** | ML | 7.70 | 1 |
+| 10 | **CausalForestDML** | ML | 7.90 | 1 |
+
+### Key Findings
+
+- **Neural models outperform ML/tree-based on average** (avg rank 6.31 vs 8.82)
+- However, **ML models dominate specific niches**: CausalForestDML wins IHDP, X-Learner wins News, BART wins TCGA
+- **No single model dominates** — dataset characteristics strongly determine the winner
+- **BART** is the best overall ML model — simple T-learner with HistGBR beats complex neural architectures on high-dim data
+- **R-Learner** underperforms — residual-on-residual can be unstable
+
+## Metrics
+
+### Ground-Truth Datasets (12)
+- **√PEHE**: Root Precision in Estimation of Heterogeneous Effects (primary, lower = better)
+- **ITE Correlation**: Pearson correlation between predicted and true ITE (higher = better)
+
+### Real-World Datasets (3, no ground truth)
+- **AUUC**: Area Under the Uplift Curve (normalized, higher = better)
+- **Qini**: Qini coefficient (normalized, higher = better)
 
 ## Architecture Details
 
@@ -89,26 +122,20 @@ See [RESULTS.md](RESULTS.md) for full results.
 - IPM regularization (MMD) for balanced representations
 - Separate outcome heads per treatment arm
 
-## Metrics
-
-- **√PEHE**: Root Precision in Estimation of Heterogeneous Effects (primary)
-- **εATE**: Absolute error in Average Treatment Effect
-- **εATT**: Absolute error in Average Treatment on Treated
-- **ITE Correlation**: Pearson correlation between predicted and true ITE
-- **Policy Agreement**: Agreement between model-recommended and oracle policy (for no-GT datasets)
-
 ## Requirements
 
 - Python 3.9+
 - PyTorch 2.0+
 - NumPy, Pandas, Scikit-learn
+- EconML, CausalML (for ML models)
+- LightGBM, XGBoost (for meta-learners)
 
 ## Citation
 
 If you use this benchmark, please cite:
 ```
 @misc{causal-inference-benchmark-2024,
-  title={Comprehensive Causal Inference Benchmark: 15 Datasets, 8 Models},
+  title={Comprehensive Causal Inference Benchmark: 15 Datasets, 14 Models},
   author={Xu, Darren},
   year={2024},
   url={https://github.com/dongxu1-samsung/causal-inference-benchmark}
