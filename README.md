@@ -1,11 +1,11 @@
 # Causal Inference Benchmark
 
 A comprehensive benchmark for Individual Treatment Effect (ITE) estimation,
-spanning **15 datasets** and **14 model architectures** (8 neural + 6 ML/tree-based).
+spanning **15 datasets** and **17 model architectures** (11 neural + 6 ML/tree-based).
 
-## Models (14)
+## Models (17)
 
-### Neural Models (8)
+### Neural Models (11)
 
 | Model | Paper/Method | Key Innovation |
 |-------|-------------|----------------|
@@ -17,6 +17,9 @@ spanning **15 datasets** and **14 model architectures** (8 neural + 6 ML/tree-ba
 | **FlexTENet** | Curth & van der Schaar 2021 | Flexible TE with orthogonality constraints |
 | **TransDCA** ★ | Novel | Transformer Disentangled Causal Attention |
 | **CausalODE** ★ | Novel | IPM-regularized Neural ODE dynamics |
+| **DESCN** | Zhong et al. 2022 (Alibaba) | Entire Space Cross Network — 5-head joint estimation |
+| **MOCA** | 2026 | Modular One-way Cross-Attention between treatment branches and confounders |
+| **DDRNet** | 2025 | Mixture-of-Experts with disentangled I/C/A subspaces |
 
 ★ = Novel architectures implemented in this benchmark
 
@@ -64,39 +67,45 @@ spanning **15 datasets** and **14 model architectures** (8 neural + 6 ML/tree-ba
 # Generate/download all datasets
 python3 scripts/download_data.py
 
-# Run neural models benchmark (v2)
+# Run neural models benchmark (v2 — 8 models)
 python3 scripts/run_benchmark.py --datasets all --seeds 42 43 44
 
-# Run ML/tree-based models benchmark (v3)
+# Run ML/tree-based models benchmark (v3 — 6 models)
 python3 scripts/run_benchmark_v3.py
+
+# Run DESCN/MOCA/DDRNet benchmark (v4 — 3 models)
+python3 scripts/run_benchmark_v4.py
+
+# Regenerate RESULTS.md from all results
+python3 scripts/generate_results.py
 ```
 
 ## Results Summary
 
 See [RESULTS.md](RESULTS.md) for full tables.
 
-### Overall Model Rankings (√PEHE across 11 GT datasets, lower rank = better)
+### Overall Model Rankings (√PEHE across 12 GT datasets, lower rank = better)
 
 | Rank | Model | Type | Avg Rank | #1 Wins |
 |------|-------|------|----------|---------|
-| 1 | **DRNet** | Neural | 5.64 | 0 |
-| 2 | **FlexTENet** | Neural | 5.64 | 3 |
-| 3 | **CausalODE** | Neural | 5.82 | 0 |
-| 4 | **CFRNet** | Neural | 5.91 | 0 |
-| 5 | **TARNet** | Neural | 5.91 | 0 |
-| 6 | **TransDCA** | Neural | 6.27 | 3 |
-| 7 | **X-Learner** | ML | 6.60 | 1 |
-| 8 | **DragonNet** | Neural | 6.73 | 0 |
-| 9 | **BART** | ML | 7.70 | 1 |
-| 10 | **CausalForestDML** | ML | 7.90 | 1 |
+| 1 | **DDRNet** | Neural | 4.73 | 3 |
+| 2 | **CFRNet** | Neural | 6.75 | 0 |
+| 3 | **DRNet** | Neural | 6.83 | 0 |
+| 4 | **FlexTENet** | Neural | 6.83 | 2 |
+| 5 | **CausalODE** | Neural | 6.92 | 0 |
+| 6 | **TARNet** | Neural | 7.08 | 0 |
+| 7 | **TransDCA** | Neural | 7.25 | 3 |
+| 8 | **DESCN** | Neural | 8.09 | 0 |
+| 9 | **DragonNet** | Neural | 8.17 | 0 |
+| 10 | **X-Learner** | ML | 8.80 | 1 |
 
 ### Key Findings
 
-- **Neural models outperform ML/tree-based on average** (avg rank 6.31 vs 8.82)
-- However, **ML models dominate specific niches**: CausalForestDML wins IHDP, X-Learner wins News, BART wins TCGA
+- **DDRNet is #1 overall** — MoE disentanglement (I/C/A subspaces) + orthogonality constraints provide the most consistent performance across diverse datasets
+- **Neural models outperform ML/tree-based on average** (avg rank 7.52 vs 10.94)
+- However, **ML models dominate specific niches**: X-Learner wins News, BART wins TCGA
 - **No single model dominates** — dataset characteristics strongly determine the winner
-- **BART** is the best overall ML model — simple T-learner with HistGBR beats complex neural architectures on high-dim data
-- **R-Learner** underperforms — residual-on-residual can be unstable
+- **TransDCA** wins 3 datasets (NLSM, IBM Causal, Continuous) despite mid-table avg rank — bimodal performer
 
 ## Metrics
 
@@ -110,17 +119,32 @@ See [RESULTS.md](RESULTS.md) for full tables.
 
 ## Architecture Details
 
+### DDRNet (MoE Disentanglement, 2025)
+- Shared encoder → 3 Mixture-of-Experts modules (Instrumental, Confounding, Adjustment)
+- Orthogonality loss + HSIC MI penalty separate subspaces
+- Treatment prediction from I+C, outcome prediction from C+A
+- Gate load balancing prevents expert collapse
+
+### MOCA (Modular Cross-Attention, 2026)
+- Shared confounder encoder + per-treatment branch encoders
+- One-way cross-attention: treatment queries attend to confounder keys/values
+- Prevents information leakage from treatment to confounders
+- Propensity head from shared representation + MMD balance
+
+### DESCN (Entire Space Cross Network, Alibaba 2022)
+- 5 heads: propensity (e), base outcomes (μ₀, μ₁), pseudo treatment effects (τ₀, τ₁)
+- Cross-constraints: τ₁ ≈ y − μ₀ for treated, τ₀ ≈ μ₁ − y for control
+- Weighted combination like X-learner: τ = e·τ₀ + (1−e)·τ₁
+
 ### TransDCA (Novel)
 - Splits input features into token groups → Transformer encoder
 - Disentangles into 3 subspaces: Instrumental (Z_I), Confounding (Z_C), Adjustment (Z_A)
 - Cross-attention between treatment and latent representations
-- Orthogonality + MI minimization losses for subspace separation
 
 ### CausalODE (Novel)
 - Encoder maps (X, T) → latent state z_0
 - Neural ODE evolves z_0 → z_T via learned dynamics f(z, t)
 - IPM regularization (MMD) for balanced representations
-- Separate outcome heads per treatment arm
 
 ## Requirements
 
@@ -135,7 +159,7 @@ See [RESULTS.md](RESULTS.md) for full tables.
 If you use this benchmark, please cite:
 ```
 @misc{causal-inference-benchmark-2024,
-  title={Comprehensive Causal Inference Benchmark: 15 Datasets, 14 Models},
+  title={Comprehensive Causal Inference Benchmark: 17 Models, 15 Datasets},
   author={Xu, Darren},
   year={2024},
   url={https://github.com/dongxu1-samsung/causal-inference-benchmark}
